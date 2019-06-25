@@ -16,7 +16,7 @@
 #include <pcl/registration/correspondence_rejection_sample_consensus.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/approximate_voxel_grid.h>
-
+//Cand gan edit this file 20190625
 using namespace std;
 
 typedef pcl::PointCloud<pcl::PointXYZ> pointCloud;
