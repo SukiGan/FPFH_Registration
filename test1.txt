@@ -1,0 +1,137 @@
+#include <iostream>
+#include <pcl/io/pcd_io.h>
+#include <ctime>
+#include <Eigen/Core>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/features/fpfh.h>
+#include <pcl/registration/ia_ransac.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <pcl/features/normal_3d.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <boost/thread/thread.hpp>
+#include <pcl/features/fpfh_omp.h>  // To  acclerate the fpfh calcuaiton
+#include <pcl/registration/correspondence_estimation.h>
+#include <pcl/registration/correspondence_rejection_features.h>  //the
+#include <pcl/registration/correspondence_rejection_sample_consensus.h>
+#include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/approximate_voxel_grid.h>
+
+using namespace std;
+
+typedef pcl::PointCloud<pcl::PointXYZ> pointCloud;
+typedef pcl::PointCloud<pcl::Normal> pointNormal;
+typedef pcl::PointCloud<pcl::FPFHSignature33> fpfhFeature;
+
+
+fpfhFeature::Ptr computeFpfhFeature(pointCloud::Ptr inputCloud, pcl::search::KdTree<pcl::PointXYZ>::Ptr tree)
+{
+    //the surface vector
+    pointNormal::Ptr point_Normal(new pointNormal);
+    pcl::NormalEstimation<pcl::PointXYZ,pcl::Normal> est_Normal;
+
+    est_Normal.setInputCloud(inputCloud);
+    est_Normal.setSearchMethod(tree);
+    est_Normal.setKSearch(10);
+    est_Normal.compute(*point_Normal);
+
+    //the Calculate the fpfh
+    fpfhFeature::Ptr fpfh(new fpfhFeature);
+    pcl::FPFHEstimationOMP<pcl::PointXYZ, pcl::Normal, pcl::FPFHSignature33> est_fpfh;
+    est_fpfh.setNumberOfThreads(4);
+    est_fpfh.setInputCloud(inputCloud);
+    est_fpfh.setInputNormals(point_Normal);
+    est_fpfh.setSearchMethod(tree);
+    est_fpfh.setKSearch(10);
+    est_fpfh.compute(*fpfh);
+
+    return fpfh;
+}
+
+
+int main(int argc, char **argv)
+{
+    if (argc < 3)
+    {
+        cout << "Need 2 point Cloud!!!" << endl;
+        return -1;
+    }
+    clock_t start,end, time;
+
+    start = clock();
+    pointCloud::Ptr source(new pointCloud);
+    pointCloud::Ptr target(new pointCloud);
+
+
+    if (pcl::io::loadPCDFile(argv[1],*source) <0)
+    {
+        PCL_ERROR("error  loading source file...\n");
+        return 0;
+
+    }
+    cout << "\nLoad File 1:" << source->size() << "points" << endl;
+
+    if (pcl::io::loadPCDFile(argv[2],*target) <0)
+    {
+        PCL_ERROR("error  loading target file...\n");
+        return 0;
+
+    }
+    cout << "\nLoad File 1:" << target->size() << "points" << endl;
+
+    pcl::search::KdTree<pcl::PointXYZ>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZ>());
+
+    fpfhFeature::Ptr sourceFpfh = computeFpfhFeature(source,tree);
+    fpfhFeature::Ptr targetFpfh = computeFpfhFeature(target,tree);
+
+    //
+    pcl::SampleConsensusInitialAlignment<pcl::PointXYZ, pcl::PointXYZ, pcl::FPFHSignature33> sacIa;
+    sacIa.setInputSource(source);
+    sacIa.setSourceFeatures(sourceFpfh);
+    sacIa.setInputTarget(target);
+    sacIa.setTargetFeatures(targetFpfh);
+
+    pointCloud::Ptr align(new pointCloud);
+    //sacIa.setNumberOfSamples(20);
+    sacIa.setCorrespondenceRandomness(6);
+    sacIa.align(*align);
+
+    end=clock();
+
+    cout <<  "calculate time is ::" << float (end-start)/CLOCKS_PER_SEC << endl;
+
+    //the visualization
+    boost::shared_ptr<pcl::visualization::PCLVisualizer> view(new pcl::visualization::PCLVisualizer("fpfh test"));\
+    int v1;
+    int v2;
+
+    view->createViewPort(0, 0.0, 0.5, 1.0, v1);
+    view->createViewPort(0.5, 0.0, 1.0, 1.0, v2);
+    view->setBackgroundColor(0,0,0,v1);
+    view->setBackgroundColor(0.05,0,0,v2);
+
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> source_cloud_color(source,250,0,0);
+    view->addPointCloud(source, source_cloud_color, "source_cloud_v1", v1);
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ> target_cloud_color(target,0,250,0);
+    view->addPointCloud(target, target_cloud_color, "target_cloud_v1", v1);
+    view->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE,2,"sources_cloud_v1");
+
+    pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZ>aligend_cloud_color(align,255,0,0);
+    view->addPointCloud(align,aligend_cloud_color,"aligend_cloud_v2",v2);
+    view->addPointCloud(target,target_cloud_color,"target_cloud_v2",v2);
+    view->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE,4,"aligend_cloud_v2");
+    view->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE,2,"target_cloud_v2");
+
+    while (!view->wasStopped())
+    {
+         // view->spin();
+         view->spinOnce(100);
+         boost::this_thread::sleep (boost::posix_time::microseconds (100000));
+
+
+    }
+    pcl::io::savePCDFile ("crou_output.pcd", *align);
+
+    return 0;
+}
+
